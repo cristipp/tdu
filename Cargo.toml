@@ -1,0 +1,12 @@
+[package]
+name = "ydu"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Disk usage treemap widget and TUI built on ratatui"
+
+[dependencies]
+ratatui = "0.30"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
