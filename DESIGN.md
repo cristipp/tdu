@@ -1,4 +1,4 @@
-# ydu — ratatui disk-usage treemap API
+# tdu — ratatui disk-usage treemap API
 
 Every file is a rectangle sized by bytes. Two modes:
 
@@ -239,14 +239,14 @@ free of process spawning):
 
 - **Copy key.** Cmd-C on macOS and Ctrl-Shift-C on Linux match each
   platform's copy convention. Terminals report those modifiers only through
-  the kitty keyboard protocol, and usually bind the keys themselves. So ydu
+  the kitty keyboard protocol, and usually bind the keys themselves. So tdu
   asks `supports_keyboard_enhancement()`, pushes `DISAMBIGUATE_ESCAPE_CODES`
   only if it's supported (and pops it on exit), and always accepts `y` as a
   fallback that every terminal passes through. The help line shows which
   keys are live. `is_copy_key` is a pure function, unit-tested per OS.
 - **Copy.** Locally, the text is piped to `pbcopy`, `wl-copy`, `xclip` or
   `xsel`, whichever is found first for the session (Wayland or X11). Over SSH,
-  or with no tool installed, ydu writes OSC 52 to the terminal. That way the
+  or with no tool installed, tdu writes OSC 52 to the terminal. That way the
   path lands on the machine you're sitting at, not the remote one.
 - **Open.** `open` on macOS, `xdg-open` (or `gio open`) on Linux. The path is
   passed as a single argument, never through a shell.

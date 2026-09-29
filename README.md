@@ -1,4 +1,4 @@
-# ydu
+# tdu
 
 disk-usage **treemap** for the terminal.
 
@@ -6,13 +6,13 @@ disk-usage **treemap** for the terminal.
 
 ```sh
 cargo build --release
-./target/release/ydu ~/Downloads
+./target/release/tdu ~/Downloads
 ```
 
 # Usage
 
 ```
-ydu [OPTIONS] [PATH]
+tdu [OPTIONS] [PATH]
 ```
 
 | Flag | Meaning |

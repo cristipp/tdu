@@ -1,7 +1,7 @@
 //! Render one frame headlessly and print it as text:
 //! `cargo run --example snapshot -- PATH [--nesting flat|header] [--no-skip-virtual]`
 use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
-use ydu::*;
+use tdu::*;
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();

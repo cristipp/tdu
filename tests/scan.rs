@@ -7,7 +7,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use ydu::{
+use tdu::{
     DiskTree, NodeId, NodeKind, ScanOptions, ScanProgress, SizeMode, scan, scan_with_progress,
 };
 
@@ -18,7 +18,7 @@ impl TempDir {
     fn new() -> Self {
         static N: AtomicU32 = AtomicU32::new(0);
         let p = std::env::temp_dir().join(format!(
-            "ydu-test-{}-{}",
+            "tdu-test-{}-{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));

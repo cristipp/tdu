@@ -45,7 +45,7 @@ pub type ColorFn<'a> = Box<dyn Fn(&DiskTree, &Tile) -> Color + 'a>;
 /// the cached layout.
 ///
 /// ```no_run
-/// # use ydu::*;
+/// # use tdu::*;
 /// # fn f(frame: &mut ratatui::Frame, tree: &DiskTree, state: &mut TreeMapState) {
 /// let map = TreeMap::new(tree)
 ///     .nesting(Nesting::Header)

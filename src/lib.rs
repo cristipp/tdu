@@ -9,7 +9,7 @@
 //!   (view root, selection, navigation, hit testing, cached layout).
 //!
 //! ```no_run
-//! use ydu::*;
+//! use tdu::*;
 //! let tree = scan(".", &ScanOptions::default()).unwrap();
 //! let mut state = TreeMapState::new(tree.root());
 //! // inside terminal.draw(|f| ...):

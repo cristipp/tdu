@@ -1,4 +1,4 @@
-//! Desktop integration for the `ydu` binary: copying to the clipboard and
+//! Desktop integration for the `tdu` binary: copying to the clipboard and
 //! opening paths with the default application, on macOS and Linux.
 //!
 //! Commands run in the background with stdio detached, so they can never block
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn which_finds_sh() {
         assert!(which("sh").is_some());
-        assert!(which("definitely-not-a-real-program-ydu").is_none());
+        assert!(which("definitely-not-a-real-program-tdu").is_none());
     }
 
     #[test]
@@ -517,7 +517,7 @@ mod tests {
             /// Install fake `pbcopy`, `wl-copy`, `xclip`, `open` and `xdg-open`
             /// that append "<name> <args>|<stdin>" to `log`.
             fn install() -> Self {
-                let dir = std::env::temp_dir().join(format!("ydu-fake-{}", std::process::id()));
+                let dir = std::env::temp_dir().join(format!("tdu-fake-{}", std::process::id()));
                 fs::create_dir_all(&dir).unwrap();
                 let log = dir.join("log");
                 for name in ["pbcopy", "wl-copy", "xclip", "open", "xdg-open"] {

@@ -1,4 +1,4 @@
-//! `ydu [OPTIONS] [PATH]`; see `--help`.
+//! `tdu [OPTIONS] [PATH]`; see `--help`.
 
 mod platform;
 
@@ -21,7 +21,7 @@ use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
 use platform::{ClickTracker, Notice, Os};
-use ydu::{
+use tdu::{
     ColorBy, ColorMode, Direction, DiskTree, Nesting, NodeId, ProgressSnapshot, ScanOptions,
     ScanProgress, SizeMode, TreeMap, TreeMapState, format_size, scan_with_progress,
 };
@@ -34,7 +34,7 @@ const PROGRESS_TICK: Duration = Duration::from_millis(80);
 const PROGRESS_DELAY: Duration = Duration::from_millis(150);
 
 const USAGE: &str = "\
-usage: ydu [OPTIONS] [PATH]
+usage: tdu [OPTIONS] [PATH]
 
   --allocated                size on disk (like du) instead of file length
   -x, --one-file-system      don't cross mount points
@@ -151,7 +151,7 @@ fn main() -> io::Result<()> {
 
     // Fail fast, before taking over the terminal, on a path that doesn't exist.
     if let Err(e) = std::fs::metadata(&path) {
-        eprintln!("ydu: {}: {e}", path.display());
+        eprintln!("tdu: {}: {e}", path.display());
         std::process::exit(1);
     }
 
@@ -279,7 +279,7 @@ fn draw_progress(
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Line::from(vec![
-            " ydu ".black().on_cyan(),
+            " tdu ".black().on_cyan(),
             Span::raw(" scanning "),
             Span::styled(
                 path.display().to_string(),
@@ -405,7 +405,7 @@ fn shell_quote(s: &str) -> String {
 }
 
 fn usage_error(msg: &str) -> ! {
-    eprintln!("ydu: {msg}\n\n{USAGE}");
+    eprintln!("tdu: {msg}\n\n{USAGE}");
     std::process::exit(2);
 }
 
@@ -549,7 +549,7 @@ fn ui(f: &mut Frame, app: &mut App) {
     // Header: view root.
     let root = tree.node(app.state.root());
     let header = Line::from(vec![
-        " ydu ".black().on_cyan(),
+        " tdu ".black().on_cyan(),
         Span::raw(" "),
         Span::styled(
             tree.path_of(app.state.root()).display().to_string(),
@@ -691,10 +691,10 @@ mod tests {
 
     #[test]
     fn status_bar_select_text_mode() {
-        let dir = std::env::temp_dir().join(format!("ydu ui {}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("tdu ui {}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("my file.txt"), "x").unwrap();
-        let tree = ydu::scan(&dir, &ScanOptions::default()).unwrap();
+        let tree = tdu::scan(&dir, &ScanOptions::default()).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         let state = TreeMapState::new(tree.root());
         let mut app = App {
@@ -725,7 +725,7 @@ mod tests {
         let t = text(&term);
         assert!(t.contains("m/click path select text"));
         assert!(
-            t.contains(r"ydu\ ui\ ") && t.contains(r"/my\ file.txt  "),
+            t.contains(r"tdu\ ui\ ") && t.contains(r"/my\ file.txt  "),
             "{t}"
         );
         app.released = Some("Selecting text".into());
@@ -734,7 +734,7 @@ mod tests {
         assert!(t.contains("Selecting text: drag"), "{t}");
         // Still shell-quoted while selecting.
         assert!(
-            t.contains(r"ydu\ ui\ ") && t.contains(r"/my\ file.txt  "),
+            t.contains(r"tdu\ ui\ ") && t.contains(r"/my\ file.txt  "),
             "{t}"
         );
         assert!(!t.contains("q quit"));
