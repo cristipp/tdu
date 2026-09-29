@@ -57,6 +57,11 @@ struct App {
     notice: Option<(Notice, Instant)>,
     /// Help-line label for the copy shortcut ("⌘C/y", "^⇧C/y" or "y").
     copy_label: &'static str,
+    /// Set while mouse capture is off so the terminal can select text; holds
+    /// the reason shown in the status bar. Any key turns capture back on.
+    released: Option<String>,
+    /// Where the selection's path is drawn (clicking it releases the mouse).
+    path_area: Rect,
 }
 
 impl App {
@@ -65,10 +70,33 @@ impl App {
     }
 
     /// Cmd-C / Ctrl-Shift-C / y: copy the selection's absolute path.
-    fn copy_selected(&mut self) {
-        if let Some(path) = self.selected_path() {
-            platform::copy(&path.to_string_lossy(), &mut io::stdout(), &self.notices.0);
+    fn copy_selected(&mut self) -> io::Result<()> {
+        if let Some(path) = self.selected_path()
+            && let Some(why) =
+                platform::copy(&path.to_string_lossy(), &mut io::stdout(), &self.notices.0)
+        {
+            // The clipboard may not have got it (e.g. Terminal.app over ssh,
+            // which has no way to receive one): let the user select the path.
+            self.release_mouse(why)?;
         }
+        Ok(())
+    }
+
+    /// Turn mouse capture off so the terminal's own drag / double-click /
+    /// triple-click selection works (terminals can't mix the two).
+    fn release_mouse(&mut self, why: String) -> io::Result<()> {
+        if self.released.is_none() {
+            execute!(io::stdout(), DisableMouseCapture)?;
+        }
+        self.released = Some(why);
+        Ok(())
+    }
+
+    fn capture_mouse(&mut self) -> io::Result<()> {
+        if self.released.take().is_some() {
+            execute!(io::stdout(), EnableMouseCapture)?;
+        }
+        Ok(())
     }
 
     /// Double-click / `o`: open the selection with the default application.
@@ -174,6 +202,8 @@ fn main() -> io::Result<()> {
                 notices: mpsc::channel(),
                 notice: Some((summary, Instant::now())),
                 copy_label: platform::copy_key_label(Os::current(), enhanced),
+                released: None,
+                path_area: Rect::default(),
             };
             run(terminal, &mut app)
         })();
@@ -355,6 +385,25 @@ fn truncate_left(s: &str, w: usize) -> String {
     }
 }
 
+/// Quote `s` for a POSIX shell the way Terminal.app does on drag-and-drop:
+/// backslash before spaces and other special characters (`/My\ Files/a\(1\)`).
+/// Paths with control characters (newlines, tabs, …) are single-quoted
+/// instead, since a backslash-newline would be a line continuation.
+fn shell_quote(s: &str) -> String {
+    let safe = |c: char| c.is_alphanumeric() || "/._-+,:@%=~^".contains(c);
+    if s.chars().any(char::is_control) {
+        return format!("'{}'", s.replace('\'', r"'\''"));
+    }
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        if !safe(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn usage_error(msg: &str) -> ! {
     eprintln!("ydu: {msg}\n\n{USAGE}");
     std::process::exit(2);
@@ -378,8 +427,24 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
         if !event::poll(Duration::from_millis(200))? {
             continue;
         }
-        match event::read()? {
-            Event::Key(k) if k.kind == KeyEventKind::Press && is_copy(&k) => app.copy_selected(),
+        let ev = event::read()?;
+        // Any key ends text-selection mode; `m` only toggles it.
+        if let Event::Key(k) = &ev
+            && k.kind == KeyEventKind::Press
+        {
+            let toggle = k.code == KeyCode::Char('m') && k.modifiers.is_empty();
+            if app.released.is_some() {
+                app.capture_mouse()?;
+                if toggle {
+                    continue;
+                }
+            } else if toggle {
+                app.release_mouse("Selecting text".into())?;
+                continue;
+            }
+        }
+        match ev {
+            Event::Key(k) if k.kind == KeyEventKind::Press && is_copy(&k) => app.copy_selected()?,
             Event::Key(k) if k.kind == KeyEventKind::Press => match k.code {
                 KeyCode::Char('q') => return Ok(()),
                 // Raw mode delivers Ctrl-C as a key, not SIGINT.
@@ -435,6 +500,11 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
                 _ => {}
             },
             Event::Mouse(m) => match m.kind {
+                MouseEventKind::Down(MouseButton::Left)
+                    if app.path_area.contains((m.column, m.row).into()) =>
+                {
+                    app.release_mouse("Selecting text".into())?;
+                }
                 MouseEventKind::Down(MouseButton::Left) => {
                     if let Some(hit) = app.state.select_at(m.column, m.row)
                         && app.clicks.press(Instant::now(), hit)
@@ -525,6 +595,8 @@ fn ui(f: &mut Frame, app: &mut App) {
             path.push('/');
             files = format!("  {} files", n.file_count);
         }
+        // Shown ready to paste into a shell (for mouse selection).
+        let path = shell_quote(&path);
         sel_line.push(Span::styled(
             path,
             Style::default().add_modifier(Modifier::BOLD),
@@ -538,14 +610,24 @@ fn ui(f: &mut Frame, app: &mut App) {
     }
     let hidden = app.state.layout().map(|l| l.hidden).unwrap_or_default();
     // A fresh notice (copied / opened / error) replaces the hidden-files count.
-    let info = match &app.notice {
-        Some((n, _)) => Span::styled(
+    // In text-selection mode the line stays fixed, so redraws don't disturb
+    // the terminal's selection.
+    let info = match (&app.released, &app.notice) {
+        (Some(why), _) => Span::styled(
+            format!(
+                " {why}: drag / double-click / triple-click to select, then ⌘C · any key resumes"
+            ),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        (None, Some((n, _))) => Span::styled(
             format!(" {}", n.text),
             Style::default()
                 .fg(if n.error { Color::Red } else { Color::Green })
                 .add_modifier(Modifier::BOLD),
         ),
-        None => Span::styled(
+        (None, None) => Span::styled(
             format!(
                 " {} files ({}) not shown",
                 hidden.files,
@@ -554,16 +636,21 @@ fn ui(f: &mut Frame, app: &mut App) {
             dim,
         ),
     };
-    let keys = Line::from(vec![
-        info,
-        Span::styled(
+    let mut keys = vec![info];
+    if app.released.is_none() {
+        keys.push(Span::styled(
             format!(
-                "  ·  ←↓↑→ move  ⏎ enter  ⌫ up  z/Z zoom  {} copy path  o/dbl-click open  n nesting  c colours  q quit",
+                "  ·  ←↓↑→ move  ⏎ enter  ⌫ up  z/Z zoom  {} copy path  m/click path select text  o/dbl-click open  n nesting  c colours  q quit",
                 app.copy_label
             ),
             dim,
-        ),
-    ]);
+        ));
+    }
+    let keys = Line::from(keys);
+    app.path_area = Rect {
+        height: 1,
+        ..status_area
+    };
     f.render_widget(
         Paragraph::new(vec![Line::from(sel_line), keys]),
         status_area,
@@ -588,6 +675,69 @@ mod tests {
         assert_eq!(truncate_left("/a/b/c", 10), "/a/b/c");
         assert_eq!(truncate_left("/very/long/path/file", 8), "…th/file");
         assert_eq!(truncate_left("/x", 0), "");
+    }
+
+    #[test]
+    fn shell_quotes_paths() {
+        assert_eq!(shell_quote("/usr/local/bin/"), "/usr/local/bin/");
+        assert_eq!(
+            shell_quote("/My Files/a (1).txt"),
+            r"/My\ Files/a\ \(1\).txt"
+        );
+        assert_eq!(shell_quote("/it's $HOME&*"), r"/it\'s\ \$HOME\&\*");
+        assert_eq!(shell_quote("/café/naïve"), "/café/naïve");
+        assert_eq!(shell_quote("/a\nb's"), "'/a\nb'\\''s'");
+    }
+
+    #[test]
+    fn status_bar_select_text_mode() {
+        let dir = std::env::temp_dir().join(format!("ydu ui {}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("my file.txt"), "x").unwrap();
+        let tree = ydu::scan(&dir, &ScanOptions::default()).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        let state = TreeMapState::new(tree.root());
+        let mut app = App {
+            tree,
+            state,
+            color_by: ColorBy::TopLevel,
+            color_mode: ColorMode::TrueColor,
+            nesting: Nesting::Flat,
+            clicks: ClickTracker::default(),
+            notices: mpsc::channel(),
+            notice: None,
+            copy_label: "y",
+            released: None,
+            path_area: Rect::default(),
+        };
+        let mut term = Terminal::new(TestBackend::new(200, 20)).unwrap();
+        let text = |term: &Terminal<TestBackend>| -> String {
+            term.backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect()
+        };
+        term.draw(|f| ui(f, &mut app)).unwrap();
+        // The path line is the first status row: clicking it selects text.
+        assert_eq!(app.path_area, Rect::new(0, 18, 200, 1));
+        let t = text(&term);
+        assert!(t.contains("m/click path select text"));
+        assert!(
+            t.contains(r"ydu\ ui\ ") && t.contains(r"/my\ file.txt  "),
+            "{t}"
+        );
+        app.released = Some("Selecting text".into());
+        term.draw(|f| ui(f, &mut app)).unwrap();
+        let t = text(&term);
+        assert!(t.contains("Selecting text: drag"), "{t}");
+        // Still shell-quoted while selecting.
+        assert!(
+            t.contains(r"ydu\ ui\ ") && t.contains(r"/my\ file.txt  "),
+            "{t}"
+        );
+        assert!(!t.contains("q quit"));
     }
 
     #[test]

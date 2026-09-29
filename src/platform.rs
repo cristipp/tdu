@@ -60,6 +60,10 @@ pub struct Env {
     pub ssh: bool,
     pub wayland: bool,
     pub x11: bool,
+    /// The terminal emulator, if it identifies itself: `$TERM_PROGRAM`
+    /// (local sessions), else `$LC_TERMINAL` (iTerm2 sets it, and `LC_*`
+    /// survives ssh with the default `SendEnv`/`AcceptEnv` config).
+    pub terminal: Option<String>,
 }
 
 impl Env {
@@ -69,7 +73,32 @@ impl Env {
             ssh: set("SSH_CONNECTION") || set("SSH_TTY"),
             wayland: set("WAYLAND_DISPLAY"),
             x11: set("DISPLAY"),
+            terminal: ["TERM_PROGRAM", "LC_TERMINAL"]
+                .iter()
+                .filter_map(|k| std::env::var(k).ok())
+                .find(|v| !v.is_empty()),
         }
+    }
+}
+
+/// Will an OSC 52 "set clipboard" sequence reach the local clipboard?
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Osc52 {
+    /// The terminal is known to support it.
+    Works,
+    /// Terminal.app: it silently ignores the sequence.
+    Unsupported,
+    /// Can't tell (typically over ssh, where the terminal isn't named).
+    Unknown,
+}
+
+pub fn osc52_support(env: &Env) -> Osc52 {
+    match env.terminal.as_deref() {
+        Some("Apple_Terminal") => Osc52::Unsupported,
+        Some("iTerm.app" | "iTerm2" | "WezTerm" | "ghostty" | "kitty" | "Alacritty") => {
+            Osc52::Works
+        }
+        _ => Osc52::Unknown,
     }
 }
 
@@ -172,19 +201,31 @@ fn first_available(cmds: &[Cmd]) -> Option<(Cmd, PathBuf)> {
 /// `terminal`, which asks the terminal emulator to set the clipboard of the
 /// machine you're sitting at. Most modern terminals support this (iTerm2,
 /// kitty, WezTerm, Alacritty, foot, GNOME Terminal 3.52+); inside tmux it
-/// needs `set -g set-clipboard on`.
-pub fn copy(text: &str, terminal: &mut impl Write, tx: &Sender<Notice>) {
+/// needs `set -g set-clipboard on`. Terminal.app does not, and there is no
+/// other way for a remote program to reach the local clipboard.
+///
+/// Returns `Some(hint)` when the text may not have reached the clipboard, so
+/// the caller should let the user select it with the mouse instead.
+pub fn copy(text: &str, terminal: &mut impl Write, tx: &Sender<Notice>) -> Option<String> {
     let label = shorten(text);
-    let cmds = clipboard_commands(Os::current(), &Env::current());
+    let env = Env::current();
+    let cmds = clipboard_commands(Os::current(), &env);
     let Some(((name, args), program)) = first_available(&cmds) else {
+        let support = osc52_support(&env);
+        if support == Osc52::Unsupported {
+            return Some("Terminal.app can't receive a clipboard over ssh".into());
+        }
         let result = terminal
             .write_all(osc52(text).as_bytes())
             .and_then(|_| terminal.flush());
-        let _ = tx.send(match result {
-            Ok(()) => Notice::ok(format!("Copied {label} (via terminal, OSC 52)")),
-            Err(e) => Notice::err(format!("Copy failed: {e}")),
-        });
-        return;
+        return match (result, support) {
+            (Err(e), _) => Some(format!("Copy failed: {e}")),
+            (Ok(()), Osc52::Works) => {
+                let _ = tx.send(Notice::ok(format!("Copied {label} (via terminal, OSC 52)")));
+                None
+            }
+            (Ok(()), _) => Some("Sent via OSC 52; not every terminal supports it".into()),
+        };
     };
     let spawned = Command::new(program)
         .args(args)
@@ -195,8 +236,7 @@ pub fn copy(text: &str, terminal: &mut impl Write, tx: &Sender<Notice>) {
     let mut child = match spawned {
         Ok(c) => c,
         Err(e) => {
-            let _ = tx.send(Notice::err(format!("Copy failed: {name}: {e}")));
-            return;
+            return Some(format!("Copy failed: {name}: {e}"));
         }
     };
     let text = text.to_owned();
@@ -215,6 +255,7 @@ pub fn copy(text: &str, terminal: &mut impl Write, tx: &Sender<Notice>) {
             (_, Ok(s)) => Notice::err(format!("Copy failed: {name} exited with {s}")),
         });
     });
+    None
 }
 
 /// Open `path` with the default application (`open` on macOS, `xdg-open` or
@@ -379,6 +420,19 @@ mod tests {
     }
 
     #[test]
+    fn knows_which_terminals_take_osc52() {
+        let env = |t: &str| Env {
+            terminal: Some(t.into()),
+            ..Env::default()
+        };
+        assert_eq!(osc52_support(&env("Apple_Terminal")), Osc52::Unsupported);
+        assert_eq!(osc52_support(&env("iTerm2")), Osc52::Works);
+        assert_eq!(osc52_support(&env("WezTerm")), Osc52::Works);
+        assert_eq!(osc52_support(&env("tmux")), Osc52::Unknown);
+        assert_eq!(osc52_support(&Env::default()), Osc52::Unknown);
+    }
+
+    #[test]
     fn picks_openers_per_platform() {
         assert_eq!(open_commands(Os::Mac), vec![("open", &[][..])]);
         let linux: Vec<_> = open_commands(Os::Linux).iter().map(|c| c.0).collect();
@@ -483,6 +537,8 @@ mod tests {
                     std::env::remove_var("SSH_CONNECTION");
                     std::env::remove_var("SSH_TTY");
                     std::env::remove_var("WAYLAND_DISPLAY");
+                    std::env::remove_var("TERM_PROGRAM");
+                    std::env::remove_var("LC_TERMINAL");
                     std::env::set_var("DISPLAY", ":99");
                 }
                 FakeTools { dir, old_path }
@@ -511,7 +567,7 @@ mod tests {
             let fake = FakeTools::install();
             let (tx, rx) = mpsc::channel();
             let mut term = Vec::new();
-            copy("/data/My Files/a.txt", &mut term, &tx);
+            assert_eq!(copy("/data/My Files/a.txt", &mut term, &tx), None);
             let n = wait(&rx);
             assert!(!n.error, "{n:?}");
             assert_eq!(n.text, "Copied /data/My Files/a.txt");
@@ -529,13 +585,31 @@ mod tests {
         fn copy_over_ssh_uses_osc52() {
             let fake = FakeTools::install();
             // SAFETY: see `FakeTools::install`.
-            unsafe { std::env::set_var("SSH_CONNECTION", "1.2.3.4 5 6.7.8.9 22") };
+            unsafe {
+                std::env::set_var("SSH_CONNECTION", "1.2.3.4 5 6.7.8.9 22");
+                std::env::set_var("LC_TERMINAL", "iTerm2");
+            }
             let (tx, rx) = mpsc::channel();
             let mut term = Vec::new();
-            copy("/srv/x", &mut term, &tx);
-            unsafe { std::env::remove_var("SSH_CONNECTION") };
+            assert_eq!(copy("/srv/x", &mut term, &tx), None);
             assert_eq!(wait(&rx).text, "Copied /srv/x (via terminal, OSC 52)");
             assert_eq!(term, osc52("/srv/x").into_bytes());
+
+            // Unknown terminal: still send OSC 52, but offer mouse selection.
+            unsafe { std::env::remove_var("LC_TERMINAL") };
+            let mut term = Vec::new();
+            assert!(copy("/srv/x", &mut term, &tx).is_some());
+            assert_eq!(term, osc52("/srv/x").into_bytes());
+
+            // Terminal.app ignores OSC 52: don't pretend it worked.
+            unsafe { std::env::set_var("TERM_PROGRAM", "Apple_Terminal") };
+            let mut term = Vec::new();
+            assert!(copy("/srv/x", &mut term, &tx).is_some());
+            assert!(term.is_empty());
+            unsafe {
+                std::env::remove_var("TERM_PROGRAM");
+                std::env::remove_var("SSH_CONNECTION");
+            }
             assert_eq!(fake.log(), "", "no native tool over SSH");
         }
 
