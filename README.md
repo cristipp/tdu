@@ -1,6 +1,6 @@
 # tdu
 
-disk-usage **treemap** for the terminal.
+treemap disk usage for the terminal.
 
 ## Build
 
