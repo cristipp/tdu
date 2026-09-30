@@ -1,6 +1,7 @@
 # tdu
 
 treemap disk usage for the terminal.
+<img width="1595" height="995" alt="Screenshot 2026-09-29 at 5 15 07 PM" src="https://github.com/user-attachments/assets/a6c79c33-0590-4ed0-ab77-8f5c90ce059a" />
 
 ## Build
 
