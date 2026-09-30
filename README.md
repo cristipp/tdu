@@ -11,7 +11,7 @@ make release
 ./target/release/tdu ~/Downloads
 ```
 
-# Usage
+## Usage
 
 ```
 tdu [OPTIONS] [PATH]
@@ -26,7 +26,7 @@ tdu [OPTIONS] [PATH]
 | `--color top\|ext\|depth` | Colour by top-level folder, by file extension, or by depth |
 | `--colors truecolor\|256\|16` | Terminal colour depth (default: auto-detect) |
 
-### Keys
+## Keys
 
 | Key | Action |
 |---|---|
