@@ -4,8 +4,10 @@ disk-usage **treemap** for the terminal.
 
 ## Build
 
-```sh
-cargo build --release
+```shell
+git clone https://github.com/cristipp/tdu
+cd tdu
+make release
 ./target/release/tdu ~/Downloads
 ```
 
